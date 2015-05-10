@@ -23,11 +23,15 @@ loop(ListenSock) ->
     loop(ListenSock).
 
 %% Takes a TCP socket and receives 
+%% http://erlang.org/doc/man/erlang.html#decode_packet-3
 handle_request(Sock) ->
-    {ok, {http_request, Method, Path, Version}}=gen_tcp:recv(Sock, 0),
+    {ok, {http_request, Method, Path, Version}} = gen_tcp:recv(Sock, 0),
+    io:fwrite("~w :: PATH=~w~nVersion=~w~n", [Method, Path, Version]),
     case (Method) of
-        'POST' -> 
+        'POST' ->
             handle_post(Sock);
+        'GET' ->
+            handle_get(Sock);
         _ -> 
             send_unsupported_error(Sock)
     end.
@@ -37,6 +41,9 @@ handle_post(Sock) ->
     Length=get_content_length(Sock),
     PostBody=get_body(Sock, Length),
     io:fwrite(PostBody),
+    send_accept(Sock).
+
+handle_get(Sock) ->
     send_accept(Sock).
 
 
