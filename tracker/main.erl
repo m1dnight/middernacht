@@ -25,13 +25,13 @@ loop(ListenSock) ->
 %% Takes a TCP socket and receives 
 %% http://erlang.org/doc/man/erlang.html#decode_packet-3
 handle_request(Sock) ->
-    {ok, {http_request, Method, Path, Version}} = gen_tcp:recv(Sock, 0),
-    io:fwrite("~w :: PATH=~w~nVersion=~w~n", [Method, Path, Version]),
+    {ok, {http_request, Method, Path, _Version}} = gen_tcp:recv(Sock, 0),
+
     case (Method) of
         'POST' ->
             handle_post(Sock);
         'GET' ->
-            handle_get(Sock);
+            handle_get(Sock, Path);
         _ -> 
             send_unsupported_error(Sock)
     end.
@@ -40,10 +40,16 @@ handle_request(Sock) ->
 handle_post(Sock) ->
     Length=get_content_length(Sock),
     PostBody=get_body(Sock, Length),
-    io:fwrite(PostBody),
+    io:fwrite("~s~n", [PostBody]),
     send_accept(Sock).
 
-handle_get(Sock) ->
+handle_get(Sock, ReqPath) ->
+    {abs_path, RelPath} = ReqPath,
+    Parameters = string:substr(RelPath, string:str(RelPath, "?") + 1),
+    %% Debugging
+    ParsedParms = httpd:parse_query(Parameters),
+    io:fwrite("Full Path: ~p~nParameters: ~p~n", [RelPath, ParsedParms]),
+    %% End Debugging
     send_accept(Sock).
 
 
@@ -63,7 +69,7 @@ get_content_length(Sock) ->
     case gen_tcp:recv(Sock, 0, 60000) of
         {ok, {http_header, _, 'Content-Length', _, Length}} -> 
             list_to_integer(Length);
-        {ok, {http_header, _, Header, _, _}}  -> 
+        {ok, {http_header, _, _Header, _, _}}  -> 
             get_content_length(Sock)
     end.
 
