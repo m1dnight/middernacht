@@ -43,12 +43,25 @@ handle_post(Sock) ->
     io:fwrite("~s~n", [PostBody]),
     send_accept(Sock).
 
+%TODO Fix the other cases. Should suffice for development.
 handle_get(Sock, ReqPath) ->
-    {abs_path, RelPath} = ReqPath,
-    Parameters = string:substr(RelPath, string:str(RelPath, "?") + 1),
-    %% Debugging
-    ParsedParms = httpd:parse_query(Parameters),
-    io:fwrite("Full Path: ~p~nParameters: ~p~n", [RelPath, ParsedParms]),
+    UrlParams = case ReqPath of
+                    {abs_path, Path} ->
+                        Params = string:substr(Path, string:str(Path, "?") + 1),
+                        ParsedParms = httpd:parse_query(Params),
+                        ParsedParms;
+                    {absoluteURI, http, _Host, _, Path} ->
+                        Params = string:substr(Path, string:str(Path, "?") + 1),
+                        ParsedParms = httpd:parse_query(Params),
+                        ParsedParms;
+                    {absoluteURI, _Other_method, _Host, _, _Path} ->
+                        send_unsupported_error(Sock);
+                    {scheme, _Scheme, _RequestString} ->
+                        send_unsupported_error(Sock);
+                    _  ->
+                        send_forbidden_error(Sock)
+                    end,
+    
     %% End Debugging
     send_accept(Sock).
 
@@ -59,6 +72,10 @@ send_accept(Sock) ->
 
 send_unsupported_error(Sock) ->
     gen_tcp:send(Sock, "HTTP/1.1 405 Method Not Allowed\r\nConnection: close\r\nAllow: POST\r\nContent-Type: text/html; charset=UTF-8\r\nCache-Control: no-cache\r\n\r\n"),
+    gen_tcp:close(Sock).
+
+send_forbidden_error(Sock) ->
+    gen_tcp:send(Sock, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nAllow: POST\r\nContent-Type: text/html; charset=UTF-8\r\nCache-Control: no-cache\r\n\r\n"),
     gen_tcp:close(Sock).	
 
 
