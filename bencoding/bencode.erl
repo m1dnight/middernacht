@@ -1,5 +1,6 @@
 -module(bencode).
 -compile(export_all).
+-compile(debug_info).
 
 
 -revision('Revision: 1.0 ').
@@ -7,26 +8,33 @@
 -created_by('christophe.detroyer@gmail.com').
 -modified('Date: 07/05/2015 13:04:07').
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%===============================================================================
+%% API
+%%===============================================================================
 
+%%-------------------------------------------------------------------------------
+%% Encoding
+%%-------------------------------------------------------------------------------
+encode(Struct) ->
+    list_to_binary(enc(Struct)).
 
+decode(Input) ->
+    {Decoded, Rest} = debencode(Input),
+    Decoded.
 
-read_file(FilePath) ->
-    FileContent = file:read_file(FilePath), 
-    case (FileContent) of
-        {ok, Binary} ->
-            {Result, _} = debencode(Binary),
-            Result;
-        {error, Reason} ->
-            io:write("Error ~w~n", [Reason])
-    end.
+%%-------------------------------------------------------------------------------
+%% Decoding
+%%-------------------------------------------------------------------------------
 
+%% Edge cases:
+%% No leading zeros.
+debencode(<<$i,$0,$0, Tail/binary>>) ->
+    erlang:error(badarg);
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%% THE MAIN DECODING METHODS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% No negative zero
+debencode(<<$i,$-,$0, Tail/binary>>) ->
+    erlang:error(badarg);
+
 debencode(<<$i, Tail/binary>>) ->
     decode_int(Tail, []);
 
@@ -40,58 +48,135 @@ debencode(Data) ->
     decode_string(Data, []).
 
 
-%%%% Dictionary %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%===============================================================================
+%% Inner functions
+%%===============================================================================
+
+%%-------------------------------------------------------------------------------
+%% Dictionary decoding
+%%-------------------------------------------------------------------------------
+
 decode_dictionary(<<$e, Tail/binary>>, Dictionary) ->
     KeyValues = lists:reverse(Dictionary),
-    {{dictionary, KeyValues}, Tail};
+    Keys = lists:map(
+	     fun({Key, Val}) ->
+		     Key
+	     end, KeyValues),
+    SortedKeys = is_sorted(Keys),
+    if 
+        not(SortedKeys) ->
+            erlang:error(badarg);
+        true ->
+            {{dictionary, KeyValues}, Tail}
+    end;
+
+
+
 
 decode_dictionary(Data, Dictionary) ->
-    % Decode the key, then the value.
+    %% Decode the key, then the value.
     {Key, ValueRest} = decode_string(Data, []),
     {Value, Rest} = debencode(ValueRest),
-    decode_dictionary(Rest, [[Key, Value] | Dictionary]).
+    decode_dictionary(Rest, [{Key, Value} | Dictionary]).
 
-%%%% List %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%-------------------------------------------------------------------------------
+%% List decoding
+%%-------------------------------------------------------------------------------
 decode_list(<<$e, Tail/binary>>, ListEls) ->
     Elements = lists:reverse(ListEls),
     {{list, Elements}, Tail};
+
 
 decode_list(Data, ListEls) ->
     {ListEl, Rest} = debencode(Data),
     decode_list(Rest, [ListEl | ListEls]).
 
-%%%% Integer %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%-------------------------------------------------------------------------------
+%% Integer decoding
+%%-------------------------------------------------------------------------------
+
 decode_int(<<$e, Tail/binary>>, IntBytes) ->
     Integer = list_to_integer(lists:reverse(IntBytes)),
-    {{integer, Integer}, Tail};
+    {Integer, Tail};
 
 decode_int(<<Head, Tail/binary>>, IntBytes) ->
     decode_int(Tail, [Head | IntBytes]).
 
-%%%% String %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-decode_string(<<$:, Tail/binary>>, LengthBytes) ->
-    Length = list_to_integer(lists:reverse(LengthBytes)),
-    <<String:Length/binary, Rest/binary>> = Tail,
-    {{string, String}, Rest};
+%%-------------------------------------------------------------------------------
+%% String decoding
+%%-------------------------------------------------------------------------------
 
+%% Parses the entire string, with the length of the string reversed 
+%% in LengthBytes.
+decode_string(<<$:, Tail/binary>>, LengthBytes) ->
+    Length = list_to_integer(lists:reverse(LengthBytes)), % Compute the length
+    <<String:Length/binary, Rest/binary>> = Tail, % Parse out the bytes for the string
+    {String, Rest};
+
+%% Parses the length of the string (e.g., 4 in "4:spam")
 decode_string(<<Head, Tail/binary>>, LengthBytes) ->
     decode_string(Tail, [Head | LengthBytes]).
 
 
+%%-------------------------------------------------------------------------------
+%% Integer encoding
+%%-------------------------------------------------------------------------------
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%% TESTS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+enc(Int) when is_integer(Int) ->
+    IntBin = list_to_binary(integer_to_list(Int)),
+    [$i, IntBin, $e];
 
-bencode_test() ->
-    {{dictionary,[[{string,<<"cow">>},{string,<<"moo">>}],
-                  [{string,<<"spam">>},{string,<<"eggs">>}]]},
-     <<>>} 
-        = debencode(<<"d3:cow3:moo4:spam4:eggse">>),
-    {{list,[{string,<<"spam">>},{string,<<"eggs">>},{string,<<"spam">>},{string,<<"eggs">>}]},<<>>} 
-        = debencode(<<"l4:spam4:eggs4:spam4:eggse">>),
-    {{integer,-3},<<>>} = debencode(<<"i-3e">>),
-    {{integer,3},<<>>} = debencode(<<"i3e">>),
-    {{string, <<"spam">>},<<>>} = debencode(<<"4:spam">>),
+%%-------------------------------------------------------------------------------
+%% String encoding
+%%-------------------------------------------------------------------------------
 
-    ok.
+enc(Str) when is_list(Str) ->
+    enc(list_to_binary(Str));
+
+enc(Str) when is_binary(Str) ->
+    IntBin = list_to_binary(integer_to_list(size(Str))),
+    [IntBin, $:, Str];
+
+%%-------------------------------------------------------------------------------
+%% List encoding
+%%-------------------------------------------------------------------------------
+
+enc({list, List}) when is_list(List) ->
+    [$l, [enc(Elem) || Elem <- List], $e];
+
+%%-------------------------------------------------------------------------------
+%% Dictionary encoding
+%%-------------------------------------------------------------------------------
+
+enc({dict, Dict}) ->
+    Data = lists:map(
+	     fun({Key, Val}) when is_list(Key) or is_binary(Key) ->
+		     [enc(Key), enc(Val)]
+	     end, lists:keysort(1, dict:to_list(Dict))),
+    [$d, Data, $e].
+
+
+%%-------------------------------------------------------------------------------
+%% Helper functions
+%%-------------------------------------------------------------------------------
+
+%% Checks if a given list contains ASCII-interpretable bytes only.
+ascii_chars(List) ->
+    lists:all(fun(Byte) -> Byte < 128 end, List).
+
+
+%% Checks if a list is in sorted order.
+is_sorted([X,Y|Rest]) when X > Y ->
+    false;
+
+is_sorted([X,Y|Rest]) when X < Y ->
+    is_sorted([Y | Rest]);
+
+is_sorted(_) ->
+    true.
+
+
+    
+

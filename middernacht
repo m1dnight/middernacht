@@ -1,0 +1,29 @@
+#!/bin/bash
+
+
+CMD=$1
+PORT=$2
+
+
+function run {
+    # Run all the things
+    erl -noshell -pa ./ebin -eval "main:start($1)" -eval 'init:stop()'
+}
+
+function test {
+    erl -noshell -pa ./ebin -eval "all_tests:run()" -eval 'init:stop()'
+}
+
+# Make all the things
+make clean > /dev/null
+make all > /dev/null
+
+# Dispatch on command
+case $CMD in
+  "run") run $PORT ;;
+  "test") test ;;
+   *) make all ;;
+esac
+
+
+
