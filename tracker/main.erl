@@ -1,77 +1,102 @@
 -module(main).
 -compile(export_all).
 
+-include_lib("records.hrl").
+
 
 -revision('Revision: 1.0 ').
 -created('Date: 07/05/2015').
 -created_by('christophe.detroyer@gmail.com').
 -modified('Date: 1995/01/05 13:04 13:04:07 ').
 
--record(peer, {address, id, port, infohash, key, isseeder}).
+%%%%%%%%%%
+%% TODO %%
+%%%%%%%%%%
+%% - Handle compact responses.
 
 %%--------------------------------------------------------------------------------
 %% API
 %%--------------------------------------------------------------------------------
 
-start(Port)->
-    {ok, ListenSock} = gen_tcp:listen(Port, [list,{active, false},{packet,http}, {reuseaddr,true}]),
+start(Port) ->
     PeerData = spawn(?MODULE, peerdata, [dict:new()]),
-    loop(ListenSock, PeerData).
+    {ok, ListenSock} = gen_tcp:listen(Port, [list,
+                                             {active, false},
+                                             {packet,http}, 
+                                             {reuseaddr,true}]),
+    accept_loop(ListenSock, PeerData).
 
 %%--------------------------------------------------------------------------------
 %% In-Memory Storage
 %%--------------------------------------------------------------------------------
+
 peerdata(Peers) ->
-    receive 
-        {insert, Identifier, Values} ->
-            io:fwrite("Adding peer ~p~ninfo: ~p~n", [Identifier, Values]),
-            NewDict = dict:update(Identifier, fun(_) -> Values end, Values, Peers),
+    receive
+        %% Insert a new peer into the database.
+        {insert, Identifier, PeerRecord} ->
+            NewDict = dict:update(Identifier, fun(_) -> 
+                                                      PeerRecord 
+                                              end, 
+                                  PeerRecord, 
+                                  Peers),
             peerdata(NewDict);
-
-        {fetch, Identifier, Sender} ->
-            Fetch = dict:find(Identifier, Peers),
-            case Fetch of
-                {ok, Values} ->
-                    Sender ! Values;
-                _ ->
-                    Sender ! {notfound}
-            end;
-
+        %% Removes a peer from storage.
         {remove, Identifier} ->
-            io:fwrite("Removing peer ~p~n", [Identifier]),
             NewDict = dict:erase(Identifier, Peers),
             peerdata(NewDict);
-
-        {bencodepeers, Sender} ->
-            PeerList = dict:fold(fun(_Id, Value, Ps) -> Bencd = bencode_peer(Value), [Ps | Bencd] end , [],  Peers),
+        %% Returns all the peers in a list.
+        %% Each peer is formatted in such a way that it can be easily bencoded.
+        %% I.e., {dict, <dict with data of peer>}.
+        {get_peers, Sender} ->
+            PeerList = dict:fold(fun(_Id, PeerRecord, {Seeders,Leechers}) ->
+                                         Bencd = format_peer(PeerRecord), 
+                                         if PeerRecord#peer.isseeder ->
+                                                 {[Bencd | Seeders], Leechers};
+                                            true  ->
+                                                 {Seeders, [Bencd | Leechers]}
+                                         end
+                                 end,
+                                 {[],[]},
+                                 Peers),
             Sender ! {ok, PeerList}
     end,
     peerdata(Peers).
 
 
-bencode_peer(Peer) ->
-    _PeerId = Peer#peer.id,
+%% Takes a Peer record and returns a dictionary that can be encoded by the
+%% included bencoder.
+format_peer(Peer) ->
+    PeerId  = Peer#peer.id,
     Address = Peer#peer.address,
-    Port = Peer#peer.port,
-    {dictionary, {"ip", Address}, {"port", Port}}.
+    Port    = Peer#peer.port,
+    {dict, dict:from_list([{"ip", Address}, {"port", Port}, {"peer id", PeerId}])}.
 
 %%--------------------------------------------------------------------------------
 %% Socket Handling
 %%--------------------------------------------------------------------------------
 
-loop(ListenSock, PeerData) ->	
+%% Listens for connections on a tcp socket. Each request is dispatched into a
+%% new actor.
+accept_loop(ListenSock, PeerData) ->	
     {ok, Sock} = gen_tcp:accept(ListenSock),
-    spawn(?MODULE, handle_request, [Sock, PeerData]),
-    loop(ListenSock, PeerData).
+    spawn(?MODULE, request_handler, [Sock, PeerData]),
+    accept_loop(ListenSock, PeerData).
 
-%% Takes a TCP socket and receives 
-%% http://erlang.org/doc/man/erlang.html#decode_packet-3
-handle_request(Sock, PeerData) ->
+
+%% Takes a TCP socket and receives a GET request. All the other requests return
+%% an error. 
+%% See http://erlang.org/doc/man/erlang.html#decode_packet-3
+request_handler(Sock, PeerData) ->
+    %% Receive the request.
     {ok, {http_request, Method, Path, _Version}} = gen_tcp:recv(Sock, 0),
+
+    %% Fetch the address from the socket and parse it into a string.
+    {ok, {AddressStruct, _Port}} = inet:peername(Sock),
+    Address = inet_parse:ntoa(AddressStruct),
 
     case (Method) of
         'GET' ->
-            handle_get(Sock, Path, PeerData);
+            handle_get(Sock, Path, PeerData, Address);
         _ -> 
             send_unsupported_error(Sock)
     end.
@@ -81,8 +106,8 @@ handle_request(Sock, PeerData) ->
 %%--------------------------------------------------------------------------------
 
 
-%%TODO Fix the other cases. Should suffice for development.
-handle_get(Sock, ReqPath, PeerData) ->
+%%Todo Fix the other cases. Should suffice for development.
+handle_get(Sock, ReqPath, PeerData, Address) ->
     UrlParams = case ReqPath of
                     {abs_path, Path} ->
                         %% Split to get parameters
@@ -90,8 +115,9 @@ handle_get(Sock, ReqPath, PeerData) ->
                         httpd:parse_query(Params);
 
                     {absoluteURI, http, _Host, _, Path} ->
+                        %% Split to get parameters
                         Params = string:substr(Path, string:str(Path, "?") + 1),
-                        _ParsedParms = httpd:parse_query(Params);
+                        httpd:parse_query(Params);
 
                     {absoluteURI, _Other_method, _Host, _, _Path} ->
                         send_unsupported_error(Sock);
@@ -102,94 +128,76 @@ handle_get(Sock, ReqPath, PeerData) ->
                     _  ->
                         send_forbidden_error(Sock)
                 end,
-    handle_announce(UrlParams, PeerData),
-    %% End Debugging
+    process_announce(UrlParams, PeerData, Address),
     send_accept(Sock, PeerData).
 
 %%--------------------------------------------------------------------------------
 %% Announce Handling
 %%--------------------------------------------------------------------------------
-handle_announce(Parameters, PeerData) ->
-    PeerId = proplists:get_value("peer_id", Parameters),
-    Port   = proplists:get_value("port", Parameters),
-    Hash   = proplists:get_value("info_hash", Parameters),
-    Key    = proplists:get_value("key", Parameters),
-    Event  = proplists:get_value("event", Parameters),
-    io:fwrite("Announce : ~p~n", [Parameters]),
-    Identifier = PeerId++Hash,
 
-    Peer = #peer{address="", id=PeerId, port=Port, infohash=Hash, key=Key, isseeder=false},
+%% Handles the announce. The parameters are parsed into a Peer record and then
+%% the internal database is updated with the information from this announce.
+process_announce(Announce, PeerData, Address) ->
+    Infohash       = proplists:get_value("info_hash", Announce),
+    PeerId         = proplists:get_value("peer_id", Announce),
+    {Port, _}      = string:to_integer(proplists:get_value("port", Announce)),
+    {Left, _}      = string:to_integer(proplists:get_value("left", Announce)),
+    Event          = proplists:get_value("event", Announce),
+    Key            = proplists:get_value("key", Announce, "nokey"),
+    io:fwrite("Announce data:~n~p~n", [Announce]),
+
+    IsSeeder = Left > 0,
+    %%PeerIdentifier = PeerId++Infohash,
+    PeerIdentifier = base64:encode(PeerId++Infohash),
+
+    Peer = #peer{id=PeerId,port=Port,isseeder=IsSeeder,
+                 address=Address,identifier=PeerIdentifier,key=Key},
 
     case Event of
         "stopped" ->
-            io:fwrite("~p stopped torrent ~p~n", [PeerId, Hash]),
-            PeerData ! {remove, Identifier};
+            PeerData ! {remove, Peer#peer.identifier};
         _  ->
-            io:fwrite("Updated information for ~p~n", [PeerId]),
-            PeerData ! {insert, Identifier, Peer}
+            PeerData ! {insert, Peer#peer.identifier, Peer}
     end,
     ok.
 
 
-
-
-%%--------------------------------------------------------------------------------
+%%-------------------------------------------------------------------------------
 %% Response Handling
-%%--------------------------------------------------------------------------------
-%% Tracker Response
+%% ------------------------------------------------------------------------------
 
-%% The tracker responds with "text/plain" document consisting of a bencoded dictionary with the following keys:
-
-%%     failure reason: If present, then no other keys may be present. The value
-%%     is a human-readable error message as to why the request failed (string).
-
-%%     warning message: (new, optional) Similar to failure reason, but the
-%%     response still gets processed normally. The warning message is shown just
-%%     like an error.
-
-%%     interval: Interval in seconds that the client should wait between sending
-%%     regular requests to the tracker
-
-%%     min interval: (optional) Minimum announce interval. If present clients
-%%     must not reannounce more frequently than this.
-
-%%     tracker id: A string that the client should send back on its next
-%%     announcements. If absent and a previous announce sent a tracker id, do
-%%     not discard the old value; keep using it.
-
-%%     complete: number of peers with the entire file, i.e. seeders (integer)
-
-%%     incomplete: number of non-seeder peers, aka "leechers" (integer)
-
-%%     peers: (dictionary model) The value is a list of dictionaries, each with
-%%     the following keys:
-
-%%         peer id: peer's self-selected ID, as described above for the tracker
-%%         request (string)
-
-%%         ip: peer's IP address either IPv6 (hexed) or IPv4 (dotted quad) or
-%%         DNS name (string)
-
-%%         port: peer's port number (integer)
-
-%%     peers: (binary model) Instead of using the dictionary model described
-%%     above, the peers value may be a string consisting of multiples of 6
-%%     bytes. First 4 bytes are the IP address and last 2 bytes are the port
-%%     number. All in network (big endian) notation.
-
-
-send_accept(Sock, PeerData) ->
-    PeerData ! {bencodepeers, self()},
+%% Builds an HTTP response that contains a bencoded list of peers and minimal
+%% bitorrent response data.
+build_response(PeerData) ->
+    PeerData ! {get_peers, self()},
     receive 
-        {ok, PeerList} ->
-            io:fwrite("Peerlist: ~p~n", [PeerList]),
-            Bencoded = bencode:encode({dictionary, dict:from_list([{"interval", 1},{"min interval", 1},{"complete", 0}, {"incomplete", 0}, {"peers", {list, PeerList}}])}),
-            io:fwrite("bencoded response:~p~n", [Bencoded]),
+        {ok, {Seeders,Leechers}} ->
+            SeedCount = length(Seeders),
+            LeechCount = length(Leechers),
+
+            Bencoded = bencode:encode({dict, dict:from_list([{"interval", 60},
+                                                             {"min interval", 0},
+                                                             {"complete", SeedCount}, 
+                                                             {"incomplete", LeechCount}, 
+                                                             {"peers", {list, lists:append(Seeders,Leechers)}}])}),
             ContentLength = byte_size(Bencoded),
-            RespData = [<<"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length ">>, ContentLength, <<"\r\n">>, Bencoded],
-            io:fwrite("response:~p~n", [RespData]),
-            gen_tcp:send(Sock, RespData)
+            [<<"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length ">>, 
+             ContentLength, 
+             <<"\r\n">>, 
+             Bencoded]
     end.
+
+
+
+
+
+%% Given a socket it will reply with the list of peers bencoded.
+send_accept(Sock, PeerData) ->
+    io:fwrite("Sending accept~n"),
+    Response = build_response(PeerData),
+    io:fwrite("~s~n", [Response]),
+    gen_tcp:send(Sock, Response),
+    gen_tcp:close(Sock).
 
 %% gen_tcp:send(Sock, "HTTP/1.1 202 Accepted\r\nConnection: close\r\nContent-Type: text/html; charset=UTF-8\r\nCache-Control: no-cache\r\n\r\n"),
 %% gen_tcp:close(Sock).

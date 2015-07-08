@@ -19,7 +19,7 @@ encode(Struct) ->
     list_to_binary(enc(Struct)).
 
 decode(Input) ->
-    {Decoded, Rest} = debencode(Input),
+    {Decoded, _Rest} = debencode(Input),
     Decoded.
 
 %%-------------------------------------------------------------------------------
@@ -28,11 +28,11 @@ decode(Input) ->
 
 %% Edge cases:
 %% No leading zeros.
-debencode(<<$i,$0,$0, Tail/binary>>) ->
+debencode(<<$i,$0,$0, _Tail/binary>>) ->
     erlang:error(badarg);
 
 %% No negative zero
-debencode(<<$i,$-,$0, Tail/binary>>) ->
+debencode(<<$i,$-,$0, _Tail/binary>>) ->
     erlang:error(badarg);
 
 debencode(<<$i, Tail/binary>>) ->
@@ -59,7 +59,7 @@ debencode(Data) ->
 decode_dictionary(<<$e, Tail/binary>>, Dictionary) ->
     KeyValues = lists:reverse(Dictionary),
     Keys = lists:map(
-	     fun({Key, Val}) ->
+	     fun({Key, _Val}) ->
 		     Key
 	     end, KeyValues),
     SortedKeys = is_sorted(Keys),
@@ -168,11 +168,8 @@ ascii_chars(List) ->
 
 
 %% Checks if a list is in sorted order.
-is_sorted([X,Y|Rest]) when X > Y ->
-    false;
-
-is_sorted([X,Y|Rest]) when X < Y ->
-    is_sorted([Y | Rest]);
+is_sorted([X,Y|Rest]) ->
+    X =< Y andalso is_sorted([Y | Rest]);
 
 is_sorted(_) ->
     true.

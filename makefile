@@ -8,7 +8,8 @@
 SOURCE = tracker/main.erl \
 	 bencoding/bencode.erl \
 	 tests/bencode_tests.erl \
-	 tests/all_tests.erl
+	 tests/all_tests.erl \
+	 tests/tracker_test.erl
 
 
 #Compiles the code into a ebin dir. relative to the source dir. 

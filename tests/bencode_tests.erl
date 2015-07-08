@@ -107,6 +107,7 @@ bytes_decode_test() ->
 
 
 list_encode_test() ->
+    <<"l4:spamd3:bar4:spam3:fooi42eee">> = bencode:encode({list, ["spam", {dict, dict:from_list([{"bar", "spam"}, {"foo", 42}])}]}),
     <<"l4:spami42ee">> = bencode:encode({list, ["spam", 42]}),
     <<"l4:spami42e6:foobare">> = bencode:encode({list, ["spam", 42, "foobar"]}).
 
