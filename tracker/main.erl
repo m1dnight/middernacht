@@ -180,7 +180,8 @@ build_response(PeerData) ->
                                                              {"complete", SeedCount}, 
                                                              {"incomplete", LeechCount}, 
                                                              {"peers", {list, lists:append(Seeders,Leechers)}}])}),
-            ContentLength = byte_size(Bencoded),
+            io:fwrite("Seed count:~p~nLeech count:~p~n", [SeedCount, LeechCount]),
+            ContentLength = integer_to_binary(byte_size(Bencoded)),
             [<<"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length ">>, 
              ContentLength, 
              <<"\r\n">>, 
@@ -195,7 +196,7 @@ build_response(PeerData) ->
 send_accept(Sock, PeerData) ->
     io:fwrite("Sending accept~n"),
     Response = build_response(PeerData),
-    io:fwrite("~s~n", [Response]),
+    io:fwrite("~ts~n", [Response]),
     gen_tcp:send(Sock, Response),
     gen_tcp:close(Sock).
 
