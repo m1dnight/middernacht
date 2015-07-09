@@ -29,10 +29,10 @@ peerdata_test() ->
     %% Test fetch peers
     PeerData ! {get_peers, self()},
     receive
-        {ok, Data} ->
-            io:fwrite("Data: ~p", [Data]),
-            lists:map(fun({dict, Entry}) -> io:fwrite("~n~w~n", [bencode:encode({dict, Entry})]), ok end, Data),
-            bencode:encode({list, Data})
+        {ok, {Seeders, Leechers}} ->
+            lists:map(fun({dict, Entry}) -> io:fwrite("~n~w~n", [bencode:encode({dict, Entry})]), ok end, Seeders),
+            lists:map(fun({dict, Entry}) -> io:fwrite("~n~w~n", [bencode:encode({dict, Entry})]), ok end, Leechers),
+            bencode:encode({list, lists:append(Seeders,Leechers)})
             
     end.
 

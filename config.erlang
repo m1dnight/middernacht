@@ -1,0 +1,3 @@
+io:format("executing user profile in HOME/.erlang\n",[]).
+code:add_path("./ebin").
+io:format(".erlang rc finished\n",[]).
