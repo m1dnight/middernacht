@@ -1,6 +1,6 @@
 -module(tracker_test).
 -include_lib("eunit/include/eunit.hrl").
--include_lib("../tracker/records.hrl").
+-include_lib("../../include/records.hrl").
 
 
 create_peer(PeerId) ->

@@ -5,14 +5,17 @@
 # Compiles the code into a ebin dir. relative to the source dir.      #
 # (../ebin)                                                           #
 #######################################################################
-SOURCE = tracker/main.erl \
-	 bencoding/bencode.erl \
-	 tests/bencode_tests.erl \
-	 tests/all_tests.erl \
-	 tests/tracker_test.erl
+SOURCE = src/main.erl \
+	 src/bencode.erl \
+	 src/tests/bencode_tests.erl \
+	 src/tests/all_tests.erl \
+	 src/tests/tracker_test.erl
+
+#Where include files are stored ".hrl"
+EFLAGS = -I include \
 
 
-#Compiles the code into a ebin dir. relative to the source dir. 
+#Compiles the code into a ebin dir. relative to the root directory
 EBIN = ebin
 ERL = erl
 GEN = beam
@@ -24,14 +27,15 @@ TARGETS = $(SOURCE:%.erl=$(EBIN)/%.beam)
 CODE = $(SOURCE:%.erl=$(EBIN)/%.beam) 
 
 $(EBIN)/%.beam: %.erl
-	$(ERLHOME)/bin/erlc  -W -b beam -o $(EBIN) $(WAIT) $<
+	$(ERLHOME)/bin/erlc  -W -b beam -o $(EBIN) $(EFLAGS) $(WAIT) $<
 
 
 
 all: $(TARGETS)
 
 
-
 clean:
+	rm -f $(CODE)
+cleanall:
 	rm -f `find . -type f -name "*.beam" -o -name "*.dump"`
 
