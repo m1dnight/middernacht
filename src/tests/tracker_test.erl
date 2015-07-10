@@ -37,8 +37,6 @@ peerdata_test() ->
     end.
 
 
-%%  c('../bencoding/bencode.erl'),c('../tracker/main.erl'), c(tracker_test).
-%%  tracker_test:peerdata_test().
 
 
 

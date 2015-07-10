@@ -56,7 +56,15 @@ memory_store(Peers) ->
                                  end,
                                  {[],[]},
                                  Peers),
-            Sender ! {ok, PeerList}
+            Sender ! {ok, PeerList};
+
+        {print_status} ->
+            dict:map(fun(Id, P) ->
+                             io:fwrite("~-10.s:~s~n",    ["Peer ID:", P#peer.id]),
+                             io:fwrite("~-10.s:~s:~w~n", ["Peer net:", P#peer.address, P#peer.port]),
+                             io:fwrite("~-10.s:~s~n", ["Seeder?:", P#peer.isseeder])
+                     end, 
+                     Peers)      
     end,
     memory_store(Peers).
 
