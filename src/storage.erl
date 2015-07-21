@@ -9,12 +9,35 @@
 -created_by('christophe.detroyer@gmail.com').
 -modified('Date: 1995/01/05 13:04 13:04:07 ').
 
+%%--------------------------------------------------------------------------------
+%% API
+%%--------------------------------------------------------------------------------
 
 %% Starts an actor responsible for storage and registers its name as 'store'.
 init() ->
     Storage = spawn(?MODULE, memory_store, [dict:new()]),
     register(store, Storage).
 
+
+remove(PeerId, StoreId) ->
+    StoreId ! {remove, PeerId}.
+
+insert(PeerId, PeerData, StoreId) ->
+    StoreId ! {insert, PeerId, PeerData}.
+
+
+get_peers(StoreId) ->
+    StoreId ! {get_peers, self()},
+    receive 
+        {ok, Peers} ->
+            Peers
+    end. 
+
+
+
+%%--------------------------------------------------------------------------------
+%% Innards
+%%--------------------------------------------------------------------------------
 
 
 %% Takes a Peer record and returns a dictionary that can be encoded by the
@@ -30,6 +53,7 @@ memory_store(Peers) ->
     receive
         %% Insert a new peer into the database.
         {insert, Identifier, PeerRecord} ->
+            io:fwrite("New peer: ~p~n", [Identifier]),
             NewDict = dict:update(Identifier, fun(_) -> 
                                                       PeerRecord 
                                               end, 

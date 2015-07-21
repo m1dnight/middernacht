@@ -28,18 +28,26 @@ init(Port) ->
     accept_loop(ListenSock).
 
 
-%% Listens for connections on a tcp socket. Each request is dispatched into a
-%% new actor.
-accept_loop(ListenSock) ->	
-    {ok, Sock} = gen_tcp:accept(ListenSock),
-    spawn(?MODULE, request_handler, [Sock]),
-    accept_loop(ListenSock).
-
-
-
 %%--------------------------------------------------------------------------------
 %% Socket Handling
 %%--------------------------------------------------------------------------------
+
+
+%% Listens for connections on a tcp socket. Each request is dispatched into a
+%% new actor.
+accept_loop(ListenSock) ->	
+    Accepted = gen_tcp:accept(ListenSock),
+    case Accepted of 
+        {ok, Sock} ->
+            gen_tcp:accept(ListenSock),
+            io:fwrite("Accepted connection",[]),
+            spawn(?MODULE, request_handler, [Sock]);
+
+        {error, _Reason} ->
+            error_logger:error_report("Error accepting from socket.")
+    end,
+    accept_loop(ListenSock).
+
 
 %% Takes a TCP socket and receives a GET request. All the other requests return
 %% an error. 
@@ -47,8 +55,8 @@ accept_loop(ListenSock) ->
 request_handler(Sock) ->
     %% Receive the request.
     Result = gen_tcp:recv(Sock, 0),
-    io:fwrite("REQUEST: ~p~n", [Result]),
     case Result of
+        %% Not sure which cases to handle here. HttpError?
         {ok, {http_request, Method, Path, _Version}} ->
             case (Method) of
                 'GET' ->
@@ -61,7 +69,7 @@ request_handler(Sock) ->
             error_logger:error_report("Error receiving from socket. Aborting.");
 
         Other  ->
-            error_logger:error_report(io_lib:format("Received unknown, aborting.~n~s", [Other]))
+            error_logger:error_report(io_lib:format("Received unknown packet from socket, aborting.~n~s", [Other]))
     end.
 
 %%--------------------------------------------------------------------------------
@@ -92,8 +100,9 @@ handle_get(Sock, ReqPath) ->
                     _  ->
                         send_forbidden_error(Sock)
                 end,
-
+    %% Process the announce data. I.e., add peer data.
     process_announce(Sock, UrlParams),
+    %% Accept the data and return.
     send_accept(Sock).
 
 %%--------------------------------------------------------------------------------
@@ -103,7 +112,6 @@ handle_get(Sock, ReqPath) ->
 %% Handles the announce. The parameters are parsed into a Peer record and then
 %% the internal database is updated with the information from this announce.
 process_announce(Sock, Announce) ->
-    io:fwrite("Announce: ~p~n", [Announce]),
     Infohash   = proplists:get_value("info_hash", Announce),
     PeerId     = proplists:get_value("peer_id", Announce),
     {Port, _}  = string:to_integer(proplists:get_value("port", Announce)),
@@ -111,9 +119,7 @@ process_announce(Sock, Announce) ->
     Event      = proplists:get_value("event", Announce),
     Key        = proplists:get_value("key", Announce, "nokey"),
     Address    = socket_address_string(Sock),
-    io:fwrite("Left: ~p~n", [Left]),
     IsSeeder   = not(Left >  0),
-    io:fwrite("Is Seeder? ~p~n", [IsSeeder]),
     Identifier = base64:encode(PeerId++Infohash),
 
     Peer = #peer{id=PeerId,port=Port,isseeder=IsSeeder,
@@ -121,9 +127,9 @@ process_announce(Sock, Announce) ->
 
     case Event of
         "stopped" ->
-            store ! {remove, Peer#peer.identifier};
+            storage:remove(Peer#peer.identifier, whereis(store));
         _  ->
-            store ! {insert, Peer#peer.identifier, Peer}
+            storage:insert(Peer#peer.identifier, Peer, whereis(store))
     end,
     ok.
 
@@ -135,31 +141,21 @@ process_announce(Sock, Announce) ->
 %% Builds an HTTP response that contains a bencoded list of peers and minimal
 %% bitorrent response data.
 build_response() ->
-    store ! {get_peers, self()},
-    receive 
-        {ok, {Seeders,Leechers}} ->
-            SeedCount = length(Seeders),
-            LeechCount = length(Leechers),
+    {Seeders,Leechers} = storage:get_peers(whereis(store)),
+    %% Count seeders/leechers, bencode the response
+    SeedCount = length(Seeders),
+    LeechCount = length(Leechers),
 
-            Bencoded = bencode:encode({dict, dict:from_list([{"interval", 60},
-                                                             {"min interval", 0},
-                                                             {"complete", SeedCount}, 
-                                                             {"incomplete", LeechCount}, 
-                                                             {"peers", {list, lists:append(Seeders,Leechers)}}])}),
-            Debencoded = bencode:decode(Bencoded),
-            io:fwrite("Decoded: ~p~n", [Debencoded]),
-            io:fwrite("Seed count:~p~nLeech count:~p~n", [SeedCount, LeechCount]),
-
-            ContentLength = integer_to_binary(byte_size(Bencoded)),
-            Response = [<<"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: ">>, 
-             ContentLength, 
-             <<"\r\n\r\n">>, 
-                        Bencoded],
-            io:fwrite("Response bytes:~n~w~n", [Bencoded]),
-            io:format("Bencoded hex:~n<<~s>>~n", [[io_lib:format("~2.16.0B",[X]) || <<X:8>> <= Bencoded ]]),
-            Response
-    end.
-
+    Bencoded = bencode:encode({dict, dict:from_list([{"interval", 60},
+                                                     {"min interval", 0},
+                                                     {"complete", SeedCount}, 
+                                                     {"incomplete", LeechCount}, 
+                                                     {"peers", {list, lists:append(Seeders,Leechers)}}])}),
+    ContentLength = integer_to_binary(byte_size(Bencoded)),
+    [<<"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: ">>, 
+     ContentLength, 
+     <<"\r\n\r\n">>, 
+     Bencoded].
 
 
 
@@ -214,9 +210,10 @@ get_body(Sock, Length) ->
 
 socket_address_string(Socket) ->
     {ok, {AddressStruct, _Port}} = inet:peername(Socket),
-    IpStruct = case AddressStruct of
-                   {192,_,_,_} ->
-                       {81,242,29,47};
-                   _ -> AddressStruct
-               end,
+    %% IpStruct = case AddressStruct of
+    %%                {192,_,_,_} ->
+    %%                    {81,242,29,47};
+    %%                _ -> AddressStruct
+    %%            end,
+    IpStruct = AddressStruct,
     inet_parse:ntoa(IpStruct).    
