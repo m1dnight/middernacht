@@ -7,7 +7,7 @@ PORT=$2
 
 function run {
     # Run all the things
-    erl -noshell -pa ./ebin -eval "main:start($1)" -eval 'init:stop()'
+    erl -noshell -pa ./ebin -eval "main:init($1)" -eval 'init:stop()'
 }
 
 function test {

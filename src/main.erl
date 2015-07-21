@@ -1,4 +1,5 @@
 -module(main).
+-export([init/1]).
 -compile(export_all).
 
 -include_lib("records.hrl").
@@ -18,7 +19,7 @@
 %% API
 %%--------------------------------------------------------------------------------
 
-start(Port) ->
+init(Port) ->
     storage:init(),
     {ok, ListenSock} = gen_tcp:listen(Port, [list,
                                              {active, false},
@@ -56,7 +57,7 @@ request_handler(Sock) ->
                     send_unsupported_error(Sock)
             end;
 
-        {error, Reason} ->
+        {error, _Reason} ->
             error_logger:error_report("Error receiving from socket. Aborting.");
 
         Other  ->
