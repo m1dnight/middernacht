@@ -32,7 +32,7 @@ $(EBIN)/%.beam: %.erl
 
 
 
-all: $(TARGETS)
+all:  $(TARGETS)
 
 
 clean:

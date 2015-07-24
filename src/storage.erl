@@ -9,9 +9,9 @@
 -created_by('christophe.detroyer@gmail.com').
 -modified('Date: 1995/01/05 13:04 13:04:07 ').
 
-%%--------------------------------------------------------------------------------
+%%===============================================================================
 %% API
-%%--------------------------------------------------------------------------------
+%%===============================================================================
 
 %% Starts an actor responsible for storage and registers its name as 'store'.
 init() ->
@@ -19,25 +19,28 @@ init() ->
     register(store, Storage).
 
 
-remove(PeerId, StoreId) ->
-    StoreId ! {remove, PeerId}.
+%%-------------------------------------------------------------------------------
+%% Messages
+%% ------------------------------------------------------------------------------
+remove(StoreId, Key) ->
+    StoreId ! {remove, Key}.
 
-insert(PeerId, PeerData, StoreId) ->
-    StoreId ! {insert, PeerId, PeerData}.
-
+insert(StoreId, Key, Value) ->
+    StoreId ! {insert, Key, Value}.
 
 get_peers(StoreId) ->
     StoreId ! {get_peers, self()},
     receive 
-        {ok, Peers} ->
-            Peers
-    end. 
+        {ok, Peers} -> Peers
+    end.
 
-
-
-%%--------------------------------------------------------------------------------
+print_status(StoreId) ->
+    StoreId ! {print_status}.
+%%-------------------------------------------------------------------------------
 %% Innards
-%%--------------------------------------------------------------------------------
+%% ------------------------------------------------------------------------------
+
+
 
 
 %% Takes a Peer record and returns a dictionary that can be encoded by the

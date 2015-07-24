@@ -29,7 +29,7 @@ decode(Input) ->
 %% Edge cases:
 %% No leading zeros.
 debencode(<<$i,$0,$0, _Tail/binary>>) ->
-    erlang:error(badarg);
+    erlang:error(badarg);                       
 
 %% No negative zero
 debencode(<<$i,$-,$0, _Tail/binary>>) ->

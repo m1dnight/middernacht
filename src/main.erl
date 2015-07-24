@@ -14,6 +14,7 @@
 %% TODO %%
 %%%%%%%%%%
 %% - Handle compact responses.
+%% - Monitor storage and respawn upon failure.
 
 %%--------------------------------------------------------------------------------
 %% API
@@ -25,7 +26,8 @@ init(Port) ->
                                              {active, false},
                                              {packet,http}, 
                                              {reuseaddr,true}]),
-    accept_loop(ListenSock).
+    spawn(?MODULE, accept_loop, [ListenSock]).
+    %%accept_loop(ListenSock).
 
 
 %%--------------------------------------------------------------------------------
@@ -35,18 +37,16 @@ init(Port) ->
 
 %% Listens for connections on a tcp socket. Each request is dispatched into a
 %% new actor.
-accept_loop(ListenSock) ->	
-    Accepted = gen_tcp:accept(ListenSock),
-    case Accepted of 
-        {ok, Sock} ->
-            gen_tcp:accept(ListenSock),
-            io:fwrite("Accepted connection",[]),
-            spawn(?MODULE, request_handler, [Sock]);
-
-        {error, _Reason} ->
-            error_logger:error_report("Error accepting from socket.")
-    end,
-    accept_loop(ListenSock).
+accept_loop(ListenSock) ->
+    Result = gen_tcp:accept(ListenSock),
+    io:fwrite("Accepted on socekt~n", []),
+    case Result of
+         {ok, Sock} ->
+            spawn(?MODULE, request_handler, [Sock]),
+            accept_loop(ListenSock);
+        _  ->
+            error_logger:error_report(io_lib:format("Error accepting on socket! ~p~n", [Result]))
+    end.
 
 
 %% Takes a TCP socket and receives a GET request. All the other requests return
@@ -69,8 +69,9 @@ request_handler(Sock) ->
             error_logger:error_report("Error receiving from socket. Aborting.");
 
         Other  ->
-            error_logger:error_report(io_lib:format("Received unknown packet from socket, aborting.~n~s", [Other]))
+            error_logger:error_report(io_lib:format("Received unknown data, aborting.~p~n", [Other]))
     end.
+
 
 %%--------------------------------------------------------------------------------
 %% Request Handling
@@ -79,28 +80,23 @@ request_handler(Sock) ->
 
 %%Todo Fix the other cases. Should suffice for development.
 handle_get(Sock, ReqPath) ->
-    io:fwrite("GETPATH: ~p~n", [ReqPath]),
     UrlParams = case ReqPath of
                     {abs_path, Path} ->
-                        %% Split to get parameters
                         Params = string:substr(Path, string:str(Path, "?") + 1),
                         httpd:parse_query(Params);
-
                     {absoluteURI, http, _Host, _, Path} ->
-                        %% Split to get parameters
                         Params = string:substr(Path, string:str(Path, "?") + 1),
                         httpd:parse_query(Params);
 
                     {absoluteURI, _Other_method, _Host, _, _Path} ->
                         send_unsupported_error(Sock);
-
                     {scheme, _Scheme, _RequestString} ->
                         send_unsupported_error(Sock);
-
                     _  ->
                         send_forbidden_error(Sock)
                 end,
-    %% Process the announce data. I.e., add peer data.
+    io:fwrite("Requested GET path:~n~p~n", [ReqPath]),
+    io:fwrite("Announce parameters:~n~p~n", [UrlParams]),
     process_announce(Sock, UrlParams),
     %% Accept the data and return.
     send_accept(Sock).
@@ -112,6 +108,7 @@ handle_get(Sock, ReqPath) ->
 %% Handles the announce. The parameters are parsed into a Peer record and then
 %% the internal database is updated with the information from this announce.
 process_announce(Sock, Announce) ->
+    %% Construct peer struct from parameters.
     Infohash   = proplists:get_value("info_hash", Announce),
     PeerId     = proplists:get_value("peer_id", Announce),
     {Port, _}  = string:to_integer(proplists:get_value("port", Announce)),
@@ -127,9 +124,11 @@ process_announce(Sock, Announce) ->
 
     case Event of
         "stopped" ->
-            storage:remove(Peer#peer.identifier, whereis(store));
+            storage:remove(whereis(store), Identifier);
+        "started" ->
+            storage:insert(whereis(store), Identifier, Peer);
         _  ->
-            storage:insert(Peer#peer.identifier, Peer, whereis(store))
+            storage:insert(whereis(store), Identifier, Peer)
     end,
     ok.
 
@@ -141,31 +140,37 @@ process_announce(Sock, Announce) ->
 %% Builds an HTTP response that contains a bencoded list of peers and minimal
 %% bitorrent response data.
 build_response() ->
+    %%store ! {get_peers, self()},
+    %% TODO: Maybe it would be better to make the storage reply, or becode the data at least?
+    %% Limit the amount of peers?
     {Seeders,Leechers} = storage:get_peers(whereis(store)),
-    %% Count seeders/leechers, bencode the response
+
     SeedCount = length(Seeders),
     LeechCount = length(Leechers),
-
     Bencoded = bencode:encode({dict, dict:from_list([{"interval", 60},
                                                      {"min interval", 0},
                                                      {"complete", SeedCount}, 
                                                      {"incomplete", LeechCount}, 
                                                      {"peers", {list, lists:append(Seeders,Leechers)}}])}),
     ContentLength = integer_to_binary(byte_size(Bencoded)),
+
     [<<"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: ">>, 
      ContentLength, 
      <<"\r\n\r\n">>, 
      Bencoded].
 
-
-
+%%--------------------------------------------------------------------------------
+%% Responses
+%%--------------------------------------------------------------------------------
 
 %% Given a socket it will reply with the list of peers bencoded.
 send_accept(Sock) ->
-    io:fwrite("Sending accept~n"),
-    store ! {print_status},
+    storage:print_status(whereis(store)),
     Response = build_response(),
+
+    io:fwrite("Sending accept~n"),
     io:fwrite("Full http response:~n~ts~n", [Response]),
+
     gen_tcp:send(Sock, Response),
     gen_tcp:close(Sock).
 
@@ -208,12 +213,17 @@ get_body(Sock, Length) ->
     end.
 
 
+%% For debugging. Lan ips are translated into wlan ips.
 socket_address_string(Socket) ->
     {ok, {AddressStruct, _Port}} = inet:peername(Socket),
-    %% IpStruct = case AddressStruct of
-    %%                {192,_,_,_} ->
-    %%                    {81,242,29,47};
-    %%                _ -> AddressStruct
-    %%            end,
-    IpStruct = AddressStruct,
-    inet_parse:ntoa(IpStruct).    
+    IpStruct = case AddressStruct of
+                   {192,_,_,_} ->
+                       {81,242,29,47};
+                   _ -> AddressStruct
+               end,
+    inet_parse:ntoa(IpStruct).  
+
+%% socket_address_string(Socket) ->
+%%     {ok, {AddressStruct, _Port}} = inet:peername(Socket),
+%%     inet_parse:ntoa(AddressStruct). 
+
