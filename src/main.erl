@@ -10,11 +10,6 @@
 -created_by('christophe.detroyer@gmail.com').
 -modified('Date: 1995/01/05 13:04 13:04:07 ').
 
-%%%%%%%%%%
-%% TODO %%
-%%%%%%%%%%
-%% - Handle compact responses.
-%% - Monitor storage and respawn upon failure.
 
 %%--------------------------------------------------------------------------------
 %% API

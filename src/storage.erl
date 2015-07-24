@@ -22,6 +22,8 @@ init() ->
 %%-------------------------------------------------------------------------------
 %% Messages
 %% ------------------------------------------------------------------------------
+
+
 remove(StoreId, Key) ->
     StoreId ! {remove, Key}.
 
@@ -36,11 +38,11 @@ get_peers(StoreId) ->
 
 print_status(StoreId) ->
     StoreId ! {print_status}.
+
+
 %%-------------------------------------------------------------------------------
 %% Innards
 %% ------------------------------------------------------------------------------
-
-
 
 
 %% Takes a Peer record and returns a dictionary that can be encoded by the
@@ -94,6 +96,3 @@ memory_store(Peers) ->
                      Peers)      
     end,
     memory_store(Peers).
-
-
-

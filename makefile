@@ -9,8 +9,7 @@ SOURCE = src/main.erl \
 	 src/bencode.erl \
 	 src/storage.erl \
 	 src/tests/bencode_tests.erl \
-	 src/tests/all_tests.erl \
-	 src/tests/tracker_test.erl
+	 src/tests/all_tests.erl 
 
 #Where include files are stored ".hrl"
 EFLAGS = -I include \
