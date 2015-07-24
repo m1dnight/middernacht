@@ -9,11 +9,37 @@
 -created_by('christophe.detroyer@gmail.com').
 -modified('Date: 1995/01/05 13:04 13:04:07 ').
 
+%%===============================================================================
+%% API
+%%===============================================================================
 
 %% Starts an actor responsible for storage and registers its name as 'store'.
 init() ->
     Storage = spawn(?MODULE, memory_store, [dict:new()]),
     register(store, Storage).
+
+
+%%-------------------------------------------------------------------------------
+%% Messages
+%% ------------------------------------------------------------------------------
+remove(StoreId, Key) ->
+    StoreId ! {remove, Key}.
+
+insert(StoreId, Key, Value) ->
+    StoreId ! {insert, Key, Value}.
+
+get_peers(StoreId) ->
+    StoreId ! {get_peers, self()},
+    receive 
+        {ok, Peers} -> Peers
+    end.
+
+print_status(StoreId) ->
+    StoreId ! {print_status}.
+%%-------------------------------------------------------------------------------
+%% Innards
+%% ------------------------------------------------------------------------------
+
 
 
 
@@ -59,7 +85,7 @@ memory_store(Peers) ->
             Sender ! {ok, PeerList};
 
         {print_status} ->
-            dict:map(fun(Id, P) ->
+            dict:map(fun(_Id, P) ->
                              io:fwrite("~-10.s:~s~n",    ["Peer ID:", P#peer.id]),
                              io:fwrite("~-10.s:~s:~w~n", ["Peer net:", P#peer.address, P#peer.port]),
                              io:fwrite("~-10.s:~s~n", ["Seeder?:", P#peer.isseeder])
