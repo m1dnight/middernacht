@@ -3,13 +3,10 @@
 
 -include_lib("records.hrl").
 
--revision('Revision: 1.0 ').
--created('Date: 07/05/2015').
--created_by('christophe.detroyer@gmail.com').
--modified('Date: 1995/01/05 13:04 13:04:07 ').
 
 %%TODO
 % - Use record for loop state.
+% - Allow a filter for a get_peers request to filter out request ip.
 
 %%===============================================================================
 %% INTERFACE
@@ -31,10 +28,9 @@ init() ->
     loop(dict:new()).
 
 
-%%===============================================================================
-%% Messages
-%%===============================================================================
-
+%%-------------------------------------------------------------------------------
+%% MESSAGE INTERFACE
+%%-------------------------------------------------------------------------------
 
 remove(Key) ->
     ?MODULE ! {remove, Key}.
@@ -49,39 +45,26 @@ get_peers() ->
     end.
 
 print_status() ->
-    ?MODULE ! {print_status}.
+    ?MODULE ! print_status.
 
 
 %%===============================================================================
 %% Innards
 %%===============================================================================
 
-
-%% Takes a Peer record and returns a dictionary that can be encoded by the
-%% included bencoder.
-format_peer_entry(Peer) ->
-    PeerId  = Peer#peer.id,
-    Address = Peer#peer.address,
-    Port    = Peer#peer.port,
-    {dict, dict:from_list([{"ip", Address}, {"port", Port}, {"peer id", PeerId}])}.
-
-
+%%-------------------------------------------------------------------------------
+%% SERVER LOOP
+%%-------------------------------------------------------------------------------
 loop(Peers) ->
     receive
-        %% Insert a new peer into the database.
         {insert, Identifier, PeerRecord} ->
-            io:fwrite("New peer: ~p~n", [Identifier]),
-            NewDict = dict:update(Identifier, fun(_) -> 
-                                                      PeerRecord 
-                                              end, 
+            NewDict = dict:update(Identifier, fun(_) -> PeerRecord end, 
                                   PeerRecord, 
                                   Peers),
             loop(NewDict);
 
-        %% Removes a peer from storage.
         {remove, Identifier} ->
-            NewDict = dict:erase(Identifier, Peers),
-            loop(NewDict);
+            loop(dict:erase(Identifier, Peers));
 
         %% Returns all the peers in a list.
         %% Each peer is formatted in such a way that it can be easily bencoded.
@@ -98,13 +81,30 @@ loop(Peers) ->
                                  {[],[]},
                                  Peers),
             Sender ! {ok, PeerList};
-
-        {print_status} ->
+        
+        %% Prints the current peer database on screen. Debugging purposes.
+        print_status ->
             dict:map(fun(_Id, P) ->
                              io:fwrite("~-10.s:~s~n",    ["Peer ID:", P#peer.id]),
                              io:fwrite("~-10.s:~s:~w~n", ["Peer net:", P#peer.address, P#peer.port]),
                              io:fwrite("~-10.s:~s~n", ["Seeder?:", P#peer.isseeder])
                      end, 
-                     Peers)      
+                     Peers);
+        
+        shutdown ->
+            exit(shutdown)
     end,
     loop(Peers).
+
+
+%%-------------------------------------------------------------------------------
+%% HELPERS
+%%-------------------------------------------------------------------------------
+
+%% Takes a Peer record and returns a dictionary that can be encoded by the
+%% bencoder.
+format_peer_entry(Peer) ->
+    PeerId  = Peer#peer.id,
+    Address = Peer#peer.address,
+    Port    = Peer#peer.port,
+    {dict, dict:from_list([{"ip", Address}, {"port", Port}, {"peer id", PeerId}])}.

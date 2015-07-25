@@ -3,11 +3,6 @@
 
 -include_lib("records.hrl").
 
-%% State for tracker.erl
--record(state, {storageservice,
-                socketservice,
-                port}).
-
 
 %%===============================================================================
 %% INTERFACE
@@ -47,4 +42,5 @@ loop(State=#state{}) ->
             exit(shutdown);
         status ->
             io:fwrite("Status of tracker: ~n~p~n", [State])
-    end.
+    end,
+    loop(State).

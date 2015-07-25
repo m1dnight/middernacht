@@ -3,12 +3,6 @@
 
 -include_lib("records.hrl").
 
--revision('Revision: 1.0 ').
--created('Date: 07/05/2015').
--created_by('christophe.detroyer@gmail.com').
--modified('Date: 1995/01/05 13:04 13:04:07 ').
-
-
 %%===============================================================================
 %% INTERFACE
 %%===============================================================================
@@ -51,27 +45,25 @@ init(Sock) ->
 
 handle_get(Sock, ReqPath) ->
     Address = socket_address_string(Sock),
-    UrlParams = case ReqPath of
-                    {abs_path, Path} ->
-                        Params = string:substr(Path, string:str(Path, "?") + 1),
-                        httpd:parse_query(Params);
-                    {absoluteURI, http, _Host, _, Path} ->
-                        Params = string:substr(Path, string:str(Path, "?") + 1),
-                        httpd:parse_query(Params);
+    case ReqPath of
+        {abs_path, Path} ->
+            Params = string:substr(Path, string:str(Path, "?") + 1),
+            Values = httpd:parse_query(Params),
+            process_announce(Address, Values),
+            send_accept(Sock);
+        {absoluteURI, http, _Host, _, Path} ->
+            Params = string:substr(Path, string:str(Path, "?") + 1),
+            Values = httpd:parse_query(Params),
+            process_announce(Address, Values),
+            send_accept(Sock);
 
-                    {absoluteURI, _Other_method, _Host, _, _Path} ->
-                        send_unsupported_error(Sock);
-                    {scheme, _Scheme, _RequestString} ->
-                        send_unsupported_error(Sock);
-                    _  ->
-                        send_forbidden_error(Sock)
-                end,
-    io:fwrite("Requested GET path:~n~p~n", [ReqPath]),
-    io:fwrite("Announce parameters:~n~p~n", [UrlParams]),
-
-
-    process_announce(Address, UrlParams),
-    send_accept(Sock).
+        {absoluteURI, _Other_method, _Host, _, _Path} ->
+            send_unsupported_error(Sock);
+        {scheme, _Scheme, _RequestString} ->
+            send_unsupported_error(Sock);
+        _  ->
+            send_forbidden_error(Sock)
+    end.
 
 
 process_announce(Address, Announce) ->
@@ -123,26 +115,29 @@ build_response() ->
 
 %% Given a socket it will reply with the list of peers bencoded.
 send_accept(Sock) ->
-    storage:print_status(),
     Response = build_response(),
 
-    io:fwrite("Sending accept~n"),
     io:fwrite("Full http response:~n~ts~n", [Response]),
 
     gen_tcp:send(Sock, Response),
     gen_tcp:close(Sock).
 
-%% gen_tcp:send(Sock, "HTTP/1.1 202 Accepted\r\nConnection: close\r\nContent-Type: text/html; charset=UTF-8\r\nCache-Control: no-cache\r\n\r\n"),
-%% gen_tcp:close(Sock).
-
 
 send_unsupported_error(Sock) ->
-    gen_tcp:send(Sock, "HTTP/1.1 405 Method Not Allowed\r\nConnection: close\r\nAllow: POST\r\nContent-Type: text/html; charset=UTF-8\r\nCache-Control: no-cache\r\n\r\n"),
+    gen_tcp:send(Sock, "HTTP/1.1 405 Method Not Allowed\r\n" ++ 
+                     "Connection: close\r\n" ++ 
+                     "Allow: POST\r\n" ++ 
+                     "Content-Type: text/html; charset=UTF-8\r\n" ++ 
+                     "Cache-Control: no-cache\r\n\r\n"),
     gen_tcp:close(Sock).
 
 
 send_forbidden_error(Sock) ->
-    gen_tcp:send(Sock, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nAllow: POST\r\nContent-Type: text/html; charset=UTF-8\r\nCache-Control: no-cache\r\n\r\n"),
+    gen_tcp:send(Sock, "HTTP/1.1 403 Forbidden\r\n" ++ 
+                     "Connection: close\r\n" ++ 
+                     "Allow: POST\r\n" ++ 
+                     "Content-Type: text/html; charset=UTF-8\r\n" ++ 
+                     "Cache-Control: no-cache\r\n\r\n"),
     gen_tcp:close(Sock).	
 
 
