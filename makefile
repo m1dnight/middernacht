@@ -5,11 +5,14 @@
 # Compiles the code into a ebin dir. relative to the source dir.      #
 # (../ebin)                                                           #
 #######################################################################
-SOURCE = src/main.erl \
-	 src/bencode.erl \
+SOURCE = src/bencode.erl \
+	 src/storage.erl \
 	 src/tests/bencode_tests.erl \
 	 src/tests/all_tests.erl \
-	 src/tests/tracker_test.erl
+	 src/sup.erl \
+	 src/tracker.erl \
+	 src/handler.erl \
+	 src/listener.erl
 
 #Where include files are stored ".hrl"
 EFLAGS = -I include \
@@ -31,7 +34,7 @@ $(EBIN)/%.beam: %.erl
 
 
 
-all: $(TARGETS)
+all:  $(TARGETS)
 
 
 clean:
