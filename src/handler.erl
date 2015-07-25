@@ -1,9 +1,7 @@
--module(main).
--export([init/1]).
+-module(handler).
 -compile(export_all).
 
 -include_lib("records.hrl").
-
 
 -revision('Revision: 1.0 ').
 -created('Date: 07/05/2015').
@@ -11,47 +9,30 @@
 -modified('Date: 1995/01/05 13:04 13:04:07 ').
 
 
-%%--------------------------------------------------------------------------------
-%% API
-%%--------------------------------------------------------------------------------
+%%===============================================================================
+%% INTERFACE
+%%===============================================================================
 
-init(Port) ->
-    storage:init(),
-    {ok, ListenSock} = gen_tcp:listen(Port, [list,
-                                             {active, false},
-                                             {packet,http}, 
-                                             {reuseaddr,true}]),
-    spawn(?MODULE, accept_loop, [ListenSock]).
-    %%accept_loop(ListenSock).
+start(Sock) ->
+    Pid=spawn(?MODULE, init, [Sock]),
+    Pid.
 
-
-%%--------------------------------------------------------------------------------
-%% Socket Handling
-%%--------------------------------------------------------------------------------
+start_link(Sock) ->
+    Pid=spawn_link(?MODULE, init, [Sock]),
+    Pid.
 
 
-%% Listens for connections on a tcp socket. Each request is dispatched into a
-%% new actor.
-accept_loop(ListenSock) ->
-    Result = gen_tcp:accept(ListenSock),
-    io:fwrite("Accepted on socekt~n", []),
-    case Result of
-         {ok, Sock} ->
-            spawn(?MODULE, request_handler, [Sock]),
-            accept_loop(ListenSock);
-        _  ->
-            error_logger:error_report(io_lib:format("Error accepting on socket! ~p~n", [Result]))
-    end.
-
+%%===============================================================================
+%% INNARDS
+%%===============================================================================
 
 %% Takes a TCP socket and receives a GET request. All the other requests return
-%% an error. 
+%% an error.
 %% See http://erlang.org/doc/man/erlang.html#decode_packet-3
-request_handler(Sock) ->
-    %% Receive the request.
+init(Sock) ->
     Result = gen_tcp:recv(Sock, 0),
     case Result of
-        %% Not sure which cases to handle here. HttpError?
+        %% TODO Not sure which cases to handle here. HttpError?
         {ok, {http_request, Method, Path, _Version}} ->
             case (Method) of
                 'GET' ->
@@ -68,13 +49,8 @@ request_handler(Sock) ->
     end.
 
 
-%%--------------------------------------------------------------------------------
-%% Request Handling
-%%--------------------------------------------------------------------------------
-
-
-%%Todo Fix the other cases. Should suffice for development.
 handle_get(Sock, ReqPath) ->
+    Address = socket_address_string(Sock),
     UrlParams = case ReqPath of
                     {abs_path, Path} ->
                         Params = string:substr(Path, string:str(Path, "?") + 1),
@@ -92,25 +68,19 @@ handle_get(Sock, ReqPath) ->
                 end,
     io:fwrite("Requested GET path:~n~p~n", [ReqPath]),
     io:fwrite("Announce parameters:~n~p~n", [UrlParams]),
-    process_announce(Sock, UrlParams),
-    %% Accept the data and return.
+
+
+    process_announce(Address, UrlParams),
     send_accept(Sock).
 
-%%--------------------------------------------------------------------------------
-%% Announce Handling
-%%--------------------------------------------------------------------------------
 
-%% Handles the announce. The parameters are parsed into a Peer record and then
-%% the internal database is updated with the information from this announce.
-process_announce(Sock, Announce) ->
-    %% Construct peer struct from parameters.
+process_announce(Address, Announce) ->
     Infohash   = proplists:get_value("info_hash", Announce),
     PeerId     = proplists:get_value("peer_id", Announce),
     {Port, _}  = string:to_integer(proplists:get_value("port", Announce)),
     {Left, _}  = string:to_integer(proplists:get_value("left", Announce)),
     Event      = proplists:get_value("event", Announce),
     Key        = proplists:get_value("key", Announce, "nokey"),
-    Address    = socket_address_string(Sock),
     IsSeeder   = not(Left >  0),
     Identifier = base64:encode(PeerId++Infohash),
 
@@ -119,26 +89,19 @@ process_announce(Sock, Announce) ->
 
     case Event of
         "stopped" ->
-            storage:remove(whereis(store), Identifier);
+            storage:remove(Identifier);
         "started" ->
-            storage:insert(whereis(store), Identifier, Peer);
+            storage:insert(Identifier, Peer);
         _  ->
-            storage:insert(whereis(store), Identifier, Peer)
+            storage:insert(Identifier, Peer)
     end,
     ok.
 
-
-%%-------------------------------------------------------------------------------
-%% Response Handling
-%% ------------------------------------------------------------------------------
-
-%% Builds an HTTP response that contains a bencoded list of peers and minimal
-%% bitorrent response data.
 build_response() ->
     %%store ! {get_peers, self()},
     %% TODO: Maybe it would be better to make the storage reply, or becode the data at least?
     %% Limit the amount of peers?
-    {Seeders,Leechers} = storage:get_peers(whereis(store)),
+    {Seeders,Leechers} = storage:get_peers(),
 
     SeedCount = length(Seeders),
     LeechCount = length(Leechers),
@@ -160,7 +123,7 @@ build_response() ->
 
 %% Given a socket it will reply with the list of peers bencoded.
 send_accept(Sock) ->
-    storage:print_status(whereis(store)),
+    storage:print_status(),
     Response = build_response(),
 
     io:fwrite("Sending accept~n"),
@@ -217,8 +180,4 @@ socket_address_string(Socket) ->
                    _ -> AddressStruct
                end,
     inet_parse:ntoa(IpStruct).  
-
-%% socket_address_string(Socket) ->
-%%     {ok, {AddressStruct, _Port}} = inet:peername(Socket),
-%%     inet_parse:ntoa(AddressStruct). 
 

@@ -1,48 +1,60 @@
 -module(storage).
 -compile(export_all).
 
--include_lib("../include/records.hrl").
-
+-include_lib("records.hrl").
 
 -revision('Revision: 1.0 ').
 -created('Date: 07/05/2015').
 -created_by('christophe.detroyer@gmail.com').
 -modified('Date: 1995/01/05 13:04 13:04:07 ').
 
+%%TODO
+% - Use record for loop state.
+
 %%===============================================================================
-%% API
+%% INTERFACE
 %%===============================================================================
+
+start() ->
+    register(?MODULE, Pid=spawn(?MODULE, init, [])),
+    Pid.
+
+start_link() ->
+    register(?MODULE, Pid=spawn_link(?MODULE, init, [])),
+    Pid.
+
+terminate() ->
+    ?MODULE ! shutdown.
 
 %% Starts an actor responsible for storage and registers its name as 'store'.
 init() ->
-    Storage = spawn(?MODULE, memory_store, [dict:new()]),
-    register(store, Storage).
+    loop(dict:new()).
 
 
-%%-------------------------------------------------------------------------------
+%%===============================================================================
 %% Messages
-%% ------------------------------------------------------------------------------
+%%===============================================================================
 
 
-remove(StoreId, Key) ->
-    StoreId ! {remove, Key}.
+remove(Key) ->
+    ?MODULE ! {remove, Key}.
 
-insert(StoreId, Key, Value) ->
-    StoreId ! {insert, Key, Value}.
+insert(Key, Value) ->
+    ?MODULE ! {insert, Key, Value}.
 
-get_peers(StoreId) ->
-    StoreId ! {get_peers, self()},
+get_peers() ->
+    ?MODULE ! {get_peers, self()},
     receive 
         {ok, Peers} -> Peers
     end.
 
-print_status(StoreId) ->
-    StoreId ! {print_status}.
+print_status() ->
+    ?MODULE ! {print_status}.
 
 
-%%-------------------------------------------------------------------------------
+%%===============================================================================
 %% Innards
-%% ------------------------------------------------------------------------------
+%%===============================================================================
 
 
 %% Takes a Peer record and returns a dictionary that can be encoded by the
@@ -54,7 +66,7 @@ format_peer_entry(Peer) ->
     {dict, dict:from_list([{"ip", Address}, {"port", Port}, {"peer id", PeerId}])}.
 
 
-memory_store(Peers) ->
+loop(Peers) ->
     receive
         %% Insert a new peer into the database.
         {insert, Identifier, PeerRecord} ->
@@ -64,12 +76,12 @@ memory_store(Peers) ->
                                               end, 
                                   PeerRecord, 
                                   Peers),
-            memory_store(NewDict);
+            loop(NewDict);
 
         %% Removes a peer from storage.
         {remove, Identifier} ->
             NewDict = dict:erase(Identifier, Peers),
-            memory_store(NewDict);
+            loop(NewDict);
 
         %% Returns all the peers in a list.
         %% Each peer is formatted in such a way that it can be easily bencoded.
@@ -95,4 +107,4 @@ memory_store(Peers) ->
                      end, 
                      Peers)      
     end,
-    memory_store(Peers).
+    loop(Peers).
